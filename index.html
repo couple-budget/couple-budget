@@ -63,6 +63,7 @@
   .split-badge { font-size: 0.65rem; padding: 2px 6px; border-radius: 10px; margin-left: 4px; }
   .split-badge.shared { background: #E8F0FE; color: #3B5BDB; }
   .split-badge.solo { background: #FEF3E8; color: #C0714A; }
+  .split-badge.advance { background: #FDE8F0; color: #B04A7A; }
   .cat-food { background: #FEF3E8; } .cat-transport { background: #E8F0FE; } .cat-entertainment { background: #F3E8FE; } .cat-home { background: #E8F5E9; } .cat-subscription { background: #FFF9E8; } .cat-income { background: #E8F5E9; } .cat-other { background: #F5F5F5; }
   .chart-wrap { background: var(--surface); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); margin-bottom: 14px; }
   .chart-title { font-size: 0.8rem; color: var(--ink2); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 12px; }
@@ -265,8 +266,9 @@
     <div class="form-group" id="split-group">
       <label>這筆怎麼算？</label>
       <div class="split-toggle">
-        <button class="split-btn active" id="btn-shared" onclick="setSplit('shared')">🤝 兩人平分</button>
-        <button class="split-btn" id="btn-solo" onclick="setSplit('solo')">👤 自己承擔</button>
+        <button class="split-btn" id="btn-shared" onclick="setSplit('shared')">🤝 平分</button>
+        <button class="split-btn active" id="btn-solo" onclick="setSplit('solo')">👤 自己承擔</button>
+        <button class="split-btn" id="btn-advance" onclick="setSplit('advance')">💝 幫對方墊</button>
       </div>
     </div>
     <div class="form-group"><label>日期</label><input type="date" id="f-date"></div>
@@ -283,7 +285,7 @@ const CAT_CLASS = {'餐飲':'cat-food','交通':'cat-transport','娛樂':'cat-en
 
 let allRecords = [], allSettlements = [];
 let curYear = new Date().getFullYear(), curMonth = new Date().getMonth();
-let curType = 'expense', curSubCat = '電影', curFilter = 'all', curPerson = '海云🙆🏻‍♀️', curSplit = 'shared';
+let curType = 'expense', curSubCat = '電影', curFilter = 'all', curPerson = '海云🙆🏻‍♀️', curSplit = 'solo';
 
 async function sbFetch(path, options={}) {
   const res = await fetch(SUPABASE_URL + path, {
@@ -377,6 +379,7 @@ function setSplit(s) {
   curSplit = s;
   document.getElementById('btn-shared').classList.toggle('active', s==='shared');
   document.getElementById('btn-solo').classList.toggle('active', s==='solo');
+  document.getElementById('btn-advance').classList.toggle('active', s==='advance');
 }
 function updateSubCat() {
   const cat = document.getElementById('f-cat').value;
@@ -441,7 +444,7 @@ async function toggleSettle(recordId, currentlySettled) {
 function recordCard(r, showDelete=false) {
   const isIncome = r.type==='income';
   const label = r.subcat ? `${r.cat} › ${r.subcat}` : r.cat;
-  const splitLabel = r.split_type==='shared' ? '<span class="split-badge shared">平分</span>' : '<span class="split-badge solo">自付</span>';
+  const splitLabel = r.split_type==='shared' ? '<span class="split-badge shared">平分</span>' : r.split_type==='advance' ? '<span class="split-badge advance">墊付</span>' : '<span class="split-badge solo">自付</span>';
   return `<div class="record-item">
     <div class="record-icon ${CAT_CLASS[r.cat]||'cat-other'}">${CAT_ICON[r.cat]||'📦'}</div>
     <div class="record-info">
@@ -466,21 +469,29 @@ function renderOverview() {
   document.getElementById('ov-haiyun').textContent = fmt(haiyunExp);
   document.getElementById('ov-zhixiang').textContent = fmt(zhixiangExp);
 
-  // Settlement: only shared expenses
+  // Settlement: shared (half each) + advance (full amount)
   const sharedExp = expenses.filter(r=>r.split_type==='shared');
-  const sharedHaiyun = sharedExp.filter(r=>r.payer==='海云🙆🏻‍♀️').reduce((s,r)=>s+Number(r.amount),0);
-  const sharedZhixiang = sharedExp.filter(r=>r.payer==='智翔💁🏿‍♂️').reduce((s,r)=>s+Number(r.amount),0);
-  const diff = sharedHaiyun - sharedZhixiang;
+  const advanceExp = expenses.filter(r=>r.split_type==='advance');
+  // shared: payer paid full, other owes half
+  const sharedHaiyun = sharedExp.filter(r=>r.payer==='海云🙆🏻‍♀️').reduce((s,r)=>s+Number(r.amount)/2,0);
+  const sharedZhixiang = sharedExp.filter(r=>r.payer==='智翔💁🏿‍♂️').reduce((s,r)=>s+Number(r.amount)/2,0);
+  // advance: payer paid full for other, other owes full
+  const advHaiyunOwes = advanceExp.filter(r=>r.payer==='智翔💁🏿‍♂️').reduce((s,r)=>s+Number(r.amount),0); // 智翔墊 → 海云欠
+  const advZhixiangOwes = advanceExp.filter(r=>r.payer==='海云🙆🏻‍♀️').reduce((s,r)=>s+Number(r.amount),0); // 海云墊 → 智翔欠
+  // net: positive = 智翔 owes 海云, negative = 海云 owes 智翔
+  const net = (sharedHaiyun - sharedZhixiang) + advZhixiangOwes - advHaiyunOwes;
+  const hasAny = sharedExp.length > 0 || advanceExp.length > 0;
   let txt;
-  if (sharedExp.length===0) txt = '本月還沒有平分紀錄 🌸';
-  else if (Math.abs(diff)<1) txt = '🎉 平分帳目均等！';
-  else if (diff>0) txt = `智翔💁🏿‍♂️ 需還 海云🙆🏻‍♀️ ${fmt(diff/2)}`;
-  else txt = `海云🙆🏻‍♀️ 需還 智翔💁🏿‍♂️ ${fmt(Math.abs(diff)/2)}`;
+  if (!hasAny) txt = '本月還沒有平分或墊付紀錄 🌸';
+  else if (Math.abs(net)<1) txt = '🎉 帳目均等！';
+  else if (net>0) txt = `智翔💁🏿‍♂️ 需還 海云🙆🏻‍♀️ ${fmt(net)}`;
+  else txt = `海云🙆🏻‍♀️ 需還 智翔💁🏿‍♂️ ${fmt(Math.abs(net))}`;
   document.getElementById('settlement-text').textContent = txt;
 
-  // Checklist: shared expense items, not yet settled
-  const pending = sharedExp.filter(r=>!isSettled(r.id));
-  const done = sharedExp.filter(r=>settledWithin7Days(r.id));
+  // Checklist: shared + advance items
+  const checklistItems = [...sharedExp, ...advanceExp];
+  const pending = checklistItems.filter(r=>!isSettled(r.id));
+  const done = checklistItems.filter(r=>settledWithin7Days(r.id));
 
   const pendingWrap = document.getElementById('settle-pending-wrap');
   const doneWrap = document.getElementById('settle-done-wrap');
@@ -494,7 +505,7 @@ function renderOverview() {
           <div class="settle-desc">${r.description}</div>
           <div class="settle-meta">${r.payer} · ${r.date}</div>
         </div>
-        <div class="settle-amt">各付 ${fmt(Number(r.amount)/2)}</div>
+        <div class="settle-amt">${r.split_type==='advance' ? '全額 ' : '各付 '}${fmt(r.split_type==='advance' ? Number(r.amount) : Number(r.amount)/2)}</div>
       </div>`).join('');
   } else { pendingWrap.style.display = 'none'; }
 
@@ -507,7 +518,7 @@ function renderOverview() {
           <div class="settle-desc">${r.description}</div>
           <div class="settle-meta">${r.payer} · ${r.date}</div>
         </div>
-        <div class="settle-amt">各付 ${fmt(Number(r.amount)/2)}</div>
+        <div class="settle-amt">${r.split_type==='advance' ? '全額 ' : '各付 '}${fmt(r.split_type==='advance' ? Number(r.amount) : Number(r.amount)/2)}</div>
       </div>`).join('');
   } else { doneWrap.style.display = 'none'; }
 
