@@ -109,6 +109,17 @@
   .loading { text-align: center; padding: 30px; color: var(--ink2); font-size: 0.85rem; }
   .toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 20px; border-radius: 20px; font-size: 0.82rem; z-index: 300; opacity: 0; transition: opacity 0.3s; pointer-events: none; white-space: nowrap; }
   .toast.show { opacity: 1; }
+
+  /* PIE CHARTS */
+  .pie-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .pie-card { background: var(--surface); border-radius: 14px; padding: 14px; box-shadow: var(--shadow); }
+  .pie-card .chart-title { margin-bottom: 8px; }
+  .pie-wrap { display: flex; flex-direction: column; align-items: center; }
+  canvas.pie-canvas { width: 100% !important; max-width: 140px; height: auto !important; }
+  .pie-legend { width: 100%; margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+  .pie-legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.68rem; color: var(--ink2); }
+  .pie-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .pie-legend-val { margin-left: auto; font-weight: 500; color: var(--ink); font-size: 0.68rem; }
 </style>
 </head>
 <body>
@@ -184,7 +195,23 @@
       <span id="monthLabel3"></span>
       <button onclick="changeMonth(1)">›</button>
     </div>
-    <div class="chart-wrap"><div class="chart-title">各分類支出</div><div class="bar-chart" id="cat-chart"></div></div>
+    <div class="pie-row">
+      <div class="pie-card">
+        <div class="chart-title">海云🙆🏻‍♀️ 分類</div>
+        <div class="pie-wrap">
+          <canvas class="pie-canvas" id="pie-haiyun"></canvas>
+          <div class="pie-legend" id="legend-haiyun"></div>
+        </div>
+      </div>
+      <div class="pie-card">
+        <div class="chart-title">智翔💁🏿‍♂️ 分類</div>
+        <div class="pie-wrap">
+          <canvas class="pie-canvas" id="pie-zhixiang"></canvas>
+          <div class="pie-legend" id="legend-zhixiang"></div>
+        </div>
+      </div>
+    </div>
+    <div class="chart-wrap"><div class="chart-title">各分類支出（合計）</div><div class="bar-chart" id="cat-chart"></div></div>
     <div class="chart-wrap"><div class="chart-title">兩人支出比較</div><div class="bar-chart" id="person-chart"></div></div>
   </div>
 
@@ -541,18 +568,69 @@ function renderRecords() {
     : '<div class="empty"><div class="emoji">🔍</div>沒有符合的紀錄</div>';
 }
 
+const PIE_COLORS = ['#C0714A','#4A7C59','#7B68C8','#E8A882','#4A9BA8','#E86868','#A8A868'];
+
+function drawPie(canvasId, legendId, data) {
+  const canvas = document.getElementById(canvasId);
+  const legend = document.getElementById(legendId);
+  const size = 140;
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,size,size);
+  const total = data.reduce((s,d)=>s+d.val,0);
+  if (total === 0) {
+    ctx.fillStyle = '#F0EBE3';
+    ctx.beginPath(); ctx.arc(size/2,size/2,size/2-4,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#7A6E62'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('無資料', size/2, size/2+4);
+    legend.innerHTML = '';
+    return;
+  }
+  let start = -Math.PI/2;
+  data.forEach((d,i) => {
+    if (d.val===0) return;
+    const slice = (d.val/total)*Math.PI*2;
+    ctx.beginPath();
+    ctx.moveTo(size/2,size/2);
+    ctx.arc(size/2,size/2,size/2-4,start,start+slice);
+    ctx.closePath();
+    ctx.fillStyle = PIE_COLORS[i%PIE_COLORS.length];
+    ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+    start += slice;
+  });
+  // center hole
+  ctx.beginPath(); ctx.arc(size/2,size/2,size/4,0,Math.PI*2);
+  ctx.fillStyle = '#FFFFFF'; ctx.fill();
+  legend.innerHTML = data.filter(d=>d.val>0).map((d,i)=>
+    `<div class="pie-legend-item">
+      <div class="pie-legend-dot" style="background:${PIE_COLORS[i%PIE_COLORS.length]}"></div>
+      <span>${CAT_ICON[d.cat]}${d.cat}</span>
+      <span class="pie-legend-val">${fmt(d.val)}</span>
+    </div>`
+  ).join('');
+}
+
 function renderStats() {
   const mr = monthRecords().filter(r=>r.type==='expense');
   const cats = ['餐飲','交通','娛樂','家庭','訂閱','理理','其他'];
+  // Pie: per person
+  const haiyunMr = mr.filter(r=>r.payer==='海云🙆🏻‍♀️');
+  const zhixiangMr = mr.filter(r=>r.payer==='智翔💁🏿‍♂️');
+  const haiyunData = cats.map(c=>({cat:c, val:haiyunMr.filter(r=>r.cat===c).reduce((s,r)=>s+Number(r.amount),0)}));
+  const zhixiangData = cats.map(c=>({cat:c, val:zhixiangMr.filter(r=>r.cat===c).reduce((s,r)=>s+Number(r.amount),0)}));
+  drawPie('pie-haiyun','legend-haiyun',haiyunData);
+  drawPie('pie-zhixiang','legend-zhixiang',zhixiangData);
+  // Bar: combined
   const catTotals = cats.map(c=>({cat:c, val:mr.filter(r=>r.cat===c).reduce((s,r)=>s+Number(r.amount),0)}));
   const maxCat = Math.max(...catTotals.map(c=>c.val),1);
   document.getElementById('cat-chart').innerHTML = catTotals.filter(c=>c.val>0).map(c=>
     `<div class="bar-row"><div class="bar-label">${CAT_ICON[c.cat]}${c.cat}</div><div class="bar-track"><div class="bar-fill" style="width:${c.val/maxCat*100}%"></div></div><div class="bar-val">${fmt(c.val)}</div></div>`
   ).join('') || '<div style="font-size:0.8rem;color:var(--ink2)">本月無支出資料</div>';
-  const haiyun = mr.filter(r=>r.payer==='海云🙆🏻‍♀️').reduce((s,r)=>s+Number(r.amount),0);
-  const zhixiang = mr.filter(r=>r.payer==='智翔💁🏿‍♂️').reduce((s,r)=>s+Number(r.amount),0);
-  const maxP = Math.max(haiyun,zhixiang,1);
-  document.getElementById('person-chart').innerHTML = [{name:'海云🙆🏻‍♀️',val:haiyun,cls:''},{name:'智翔💁🏿‍♂️',val:zhixiang,cls:'alt'}].map(p=>
+  const haiyunTotal = haiyunMr.reduce((s,r)=>s+Number(r.amount),0);
+  const zhixiangTotal = zhixiangMr.reduce((s,r)=>s+Number(r.amount),0);
+  const maxP = Math.max(haiyunTotal,zhixiangTotal,1);
+  document.getElementById('person-chart').innerHTML = [{name:'海云🙆🏻‍♀️',val:haiyunTotal,cls:''},{name:'智翔💁🏿‍♂️',val:zhixiangTotal,cls:'alt'}].map(p=>
     `<div class="bar-row"><div class="bar-label">${p.name}</div><div class="bar-track"><div class="bar-fill ${p.cls}" style="width:${p.val/maxP*100}%"></div></div><div class="bar-val">${fmt(p.val)}</div></div>`
   ).join('');
 }
